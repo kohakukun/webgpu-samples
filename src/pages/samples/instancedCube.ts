@@ -18,9 +18,9 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const projectionMatrix = mat4.create();
   mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 1, 100.0);
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
     format: 'bgra8unorm',
   });

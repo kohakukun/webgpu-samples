@@ -13,7 +13,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const adapter = await navigator.gpu.requestAdapter();
   const device = await adapter.requestDevice();
   const glslang = await glslangModule();
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
   const swapChainFormat = 'bgra8unorm';
 
@@ -35,7 +35,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   new Float32Array(verticesBuffer.getMappedRange()).set(rectVerts);
   verticesBuffer.unmap();
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
     format: swapChainFormat,
   });

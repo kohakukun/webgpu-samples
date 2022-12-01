@@ -27,6 +27,10 @@ const MainLayout: React.FunctionComponent<AppProps> = ({
     'imageBlur',
     'shadowMapping',
     'reversedZ',
+    'testIndexed',
+    'storage',
+    'testBindGroups',
+    'colorCorrection',
   ];
 
   const oldPathSyntaxMatch = router.asPath.match(/(\?wgsl=[01])#(\S+)/);

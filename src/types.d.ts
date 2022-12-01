@@ -6,7 +6,7 @@ declare module '*.module.css' {
   export default styles;
 }
 interface HTMLCanvasElement extends HTMLElement {
-  getContext(contextId: 'gpupresent'): GPUCanvasContext | null;
+  getContext(contextId: 'webgpu'): GPUCanvasContext | null;
 }
 
 declare const __SOURCE__: string;

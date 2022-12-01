@@ -38,6 +38,19 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   new Float32Array(verticesBuffer.getMappedRange()).set(cubeVertexArray);
   verticesBuffer.unmap();
 
+  const placeholderBindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      {
+        // Transform
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: {
+          type: 'uniform',
+        },
+      },
+    ],
+  });
+
   const bindGroupLayout = device.createBindGroupLayout({
     entries: [
       {
@@ -68,20 +81,18 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   });
 
 
-
   const pipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [device.createBindGroupLayout({entries: []}), bindGroupLayout, device.createBindGroupLayout({entries: []})],
+    bindGroupLayouts: [
+      placeholderBindGroupLayout,
+      bindGroupLayout
+    ],
   });
 
   const pipeline = device.createRenderPipeline({
-    //layout: pipelineLayout,
     layout: pipelineLayout,
+    //layout: 'auto',
     vertex: {
-      module: useWGSL
-        ? device.createShaderModule({
-            code: wgslShaders.vertex,
-          })
-        : device.createShaderModule({
+      module: device.createShaderModule({
             code: glslShaders.vertex,
             transform: (glsl) => glslang.compileGLSL(glsl, 'vertex'),
           }),
@@ -107,11 +118,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       ],
     },
     fragment: {
-      module: useWGSL
-        ? device.createShaderModule({
-            code: wgslShaders.fragment,
-          })
-        : device.createShaderModule({
+      module: device.createShaderModule({
             code: glslShaders.fragment,
             transform: (glsl) => glslang.compileGLSL(glsl, 'fragment'),
           }),
@@ -180,7 +187,21 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
     magFilter: 'linear',
     minFilter: 'linear',
   });
-
+  const placeholderBindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      {
+        binding: 0,
+        resource: {
+          buffer: device.createBuffer({
+            size: 4,
+            usage: GPUBufferUsage.UNIFORM,
+            mappedAtCreation: false,
+          }),
+        },
+      },
+    ]
+  });
   const uniformBindGroup = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(1),
     entries: [
@@ -200,6 +221,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       },
     ],
   });
+
 
   const renderPassDescriptor: GPURenderPassDescriptor = {
     colorAttachments: [
@@ -259,9 +281,8 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
     const commandEncoder = device.createCommandEncoder();
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(pipeline);
-    passEncoder.setBindGroup(0, device.createBindGroup({entries: [], layout: pipeline.getBindGroupLayout(0)}));
+    //passEncoder.setBindGroup(0, placeholderBindGroup);
     passEncoder.setBindGroup(1, uniformBindGroup);
-    passEncoder.setBindGroup(2, device.createBindGroup({entries: [], layout: pipeline.getBindGroupLayout(2)}));
     passEncoder.setVertexBuffer(0, verticesBuffer);
     passEncoder.draw(cubeVertexCount, 1, 0, 0);
     passEncoder.end();
@@ -271,6 +292,9 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
 
 const glslShaders = {
   vertex: `#version 450
+
+layout(set = 0, binding = 0) uniform ubo_unusedBuffer { int _unusedBuffer; };
+
 layout(set = 1, binding = 0) uniform Uniforms {
   mat4 modelViewProjectionMatrix;
 } uniforms;
@@ -289,6 +313,7 @@ void main() {
 `,
 
   fragment: `#version 450
+
 layout(set = 1, binding = 1) uniform sampler mySampler;
 layout(set = 1, binding = 2) uniform texture2D myTexture;
 
@@ -302,47 +327,12 @@ void main() {
 `,
 };
 
-const wgslShaders = {
-  vertex: `
-struct Uniforms {
-  modelViewProjectionMatrix : mat4x4<f32>,
-};
-@binding(0) @group(1) var<uniform> uniforms : Uniforms;
-
-struct VertexOutput {
-  @builtin(position) Position : vec4<f32>,
-  @location(0) fragUV : vec2<f32>,
-  @location(1) fragPosition: vec4<f32>,
-};
-
-@vertex
-fn main(@location(0) position : vec4<f32>,
-        @location(1) uv : vec2<f32> ) -> VertexOutput {
-  var output : VertexOutput;
-  output.fragPosition = 0.5 * (position + vec4<f32>(1.0, 1.0, 1.0, 1.0));
-  output.Position = uniforms.modelViewProjectionMatrix * position;
-  output.fragUV = uv;
-  return output;
-}
-`,
-  fragment: `
-@binding(1) @group(1) var mySampler: sampler;
-@binding(2) @group(1) var myTexture: texture_2d<f32>;
-
-@fragment
-fn main(@location(0) fragUV: vec2<f32>,
-        @location(1) fragPosition: vec4<f32>) -> @location(0) vec4<f32> {
-  return textureSample(myTexture, mySampler, fragUV) * fragPosition;
-}
-`,
-};
-
 export default makeBasicExample({
   name: 'Textured Cube',
   description: 'This example shows how to bind and sample textures.',
   slug: 'texturedCube',
   init,
-  wgslShaders,
+  wgslShaders: '',
   glslShaders,
   source: __SOURCE__,
 });

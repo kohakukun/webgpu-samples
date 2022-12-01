@@ -18,9 +18,9 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
 
   const aspect = Math.abs(canvas.width / canvas.height);
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
     format: 'bgra8unorm',
   });
@@ -78,7 +78,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   // Create the model vertex buffer.
   const vertexBuffer = device.createBuffer({
     size: mesh.positions.length * 3 * 2 * Float32Array.BYTES_PER_ELEMENT,
-    usage: GPUBufferUsage.VERTEX,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.MAP_READ,
     mappedAtCreation: true,
   });
   {
@@ -94,7 +94,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const indexCount = mesh.triangles.length * 3;
   const indexBuffer = device.createBuffer({
     size: indexCount * Uint16Array.BYTES_PER_ELEMENT,
-    usage: GPUBufferUsage.INDEX,
+    usage: GPUBufferUsage.INDEX | GPUBufferUsage.MAP_READ,
     mappedAtCreation: true,
   });
   {
@@ -108,7 +108,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   // Create the depth texture for rendering/sampling the shadow map.
   const shadowDepthTexture = device.createTexture({
     size: [shadowDepthTextureSize, shadowDepthTextureSize, 1],
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     format: 'depth32float',
   });
   const shadowDepthTextureView = shadowDepthTexture.createView();
@@ -140,7 +140,25 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
     cullMode: 'back',
   };
 
+  const uniformBufferBindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: {
+          type: 'uniform',
+        },
+      },
+    ],
+  });
+
   const shadowPipeline = device.createRenderPipeline({
+    layout: device.createPipelineLayout({
+      bindGroupLayouts: [
+        uniformBufferBindGroupLayout,
+        uniformBufferBindGroupLayout,
+      ],
+    }),
     vertex: {
       module: useWGSL
         ? device.createShaderModule({
@@ -259,17 +277,20 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
     colorAttachments: [
       {
         // attachment is acquired and set in render loop.
-        attachment: undefined,
+        view: undefined,
 
         loadValue: { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
       },
     ],
     depthStencilAttachment: {
-      attachment: depthTexture.createView(),
+      view: depthTexture.createView(),
 
-      depthLoadValue: 1.0,
+      depthClearValue: 1.0,
+      depthLoadOp: 'clear',
+
       depthStoreOp: 'store',
-      stencilLoadValue: 0,
+      stencilLoadOp: 'clear',
+      stencilClearValue: 0,
       stencilStoreOp: 'store',
     },
   };
@@ -425,15 +446,14 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const shadowPassDescriptor: GPURenderPassDescriptor = {
     colorAttachments: [],
     depthStencilAttachment: {
-      attachment: shadowDepthTextureView,
-      depthLoadValue: 1.0,
+      view: shadowDepthTextureView,
+      depthClearValue: 1.0,
+      depthLoadOp: 'clear',
       depthStoreOp: 'store',
-      stencilLoadValue: 0,
-      stencilStoreOp: 'store',
     },
   };
 
-  return function frame() {
+  return async function frame() {
     const cameraViewProj = getCameraViewProjMatrix();
     device.queue.writeBuffer(
       sceneUniformBuffer,
@@ -443,7 +463,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       cameraViewProj.byteLength
     );
 
-    renderPassDescriptor.colorAttachments[0].attachment = swapChain
+    renderPassDescriptor.colorAttachments[0].view = context
       .getCurrentTexture()
       .createView();
 
@@ -455,9 +475,18 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       shadowPass.setBindGroup(1, modelBindGroup);
       shadowPass.setVertexBuffer(0, vertexBuffer);
       shadowPass.setIndexBuffer(indexBuffer, 'uint16');
+      /*
+      await vertexBuffer.mapAsync(GPUMapMode.READ, 0, vertexBuffer.size);
+      await indexBuffer.mapAsync(GPUMapMode.READ, 0, indexBuffer.size);
+      const indices = new Int16Array(indexBuffer.getMappedRange());
+      const positions = new Float32Array(vertexBuffer.getMappedRange());
+      console.log(indices);
+      console.log(positions);
+      */
+      
       shadowPass.drawIndexed(indexCount);
 
-      shadowPass.endPass();
+      shadowPass.end();
     }
     {
       const renderPass = commandEncoder.beginRenderPass(renderPassDescriptor);
@@ -468,7 +497,12 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       renderPass.setIndexBuffer(indexBuffer, 'uint16');
       renderPass.drawIndexed(indexCount);
 
-      renderPass.endPass();
+      renderPass.draw(indexCount);
+
+      []
+      indices = [0, 1, 2, 1, 2, 3];
+      vertexid/3
+      renderPass.end();
     }
     device.queue.submit([commandEncoder.finish()]);
   };
@@ -579,57 +613,57 @@ void main() {
 
 const wgslShaders = {
   vertexShadow: `
-[[block]] struct Scene {
-  [[offset(0)]] lightViewProjMatrix : mat4x4<f32>;
-  [[offset(64)]] cameraViewProjMatrix : mat4x4<f32>;
-  [[offset(128)]] lightPos : vec3<f32>;
+struct Scene {
+  lightViewProjMatrix : mat4x4<f32>,
+  cameraViewProjMatrix : mat4x4<f32>,
+  lightPos : vec3<f32>,
 };
 
-[[block]] struct Model {
-  [[offset(0)]] modelMatrix : mat4x4<f32>;
+struct Model {
+  modelMatrix : mat4x4<f32>,
 };
 
-[[group(0), binding(0)]] var<uniform> scene : Scene;
-[[group(1), binding(0)]] var<uniform> model : Model;
+@group(0) @binding(0) var<uniform> scene : Scene;
+@group(1) @binding(0) var<uniform> model : Model;
 
-[[stage(vertex)]]
-fn main([[location(0)]] position : vec3<f32>)
-     -> [[builtin(position)]] vec4<f32> {
+@vertex
+fn main(@location(0) position : vec3<f32>)
+     -> @builtin(position) vec4<f32> {
   return scene.lightViewProjMatrix * model.modelMatrix * vec4<f32>(position, 1.0);
 }
 `,
 
   fragmentShadow: `
-[[stage(fragment)]]
+@fragment
 fn main() {
 }
 `,
 
   vertex: `
-[[block]] struct Scene {
-  [[offset(0)]] lightViewProjMatrix : mat4x4<f32>;
-  [[offset(64)]] cameraViewProjMatrix : mat4x4<f32>;
-  [[offset(128)]] lightPos : vec3<f32>;
+struct Scene {
+  lightViewProjMatrix : mat4x4<f32>,
+  cameraViewProjMatrix : mat4x4<f32>,
+  lightPos : vec3<f32>,
 };
 
-[[block]] struct Model {
-  [[offset(0)]] modelMatrix : mat4x4<f32>;
+struct Model {
+  modelMatrix : mat4x4<f32>
 };
 
-[[group(0), binding(0)]] var<uniform> scene : Scene;
-[[group(1), binding(0)]] var<uniform> model : Model;
+@group(0) @binding(0) var<uniform> scene : Scene;
+@group(1) @binding(0) var<uniform> model : Model;
 
 struct VertexOutput {
-  [[location(0)]] shadowPos : vec3<f32>;
-  [[location(1)]] fragPos : vec3<f32>;
-  [[location(2)]] fragNorm : vec3<f32>;
+  @location(0) shadowPos : vec3<f32>,
+  @location(1) fragPos : vec3<f32>,
+  @location(2) fragNorm : vec3<f32>,
 
-  [[builtin(position)]] Position : vec4<f32>;
+  @builtin(position) Position : vec4<f32>,
 };
 
-[[stage(vertex)]]
-fn main([[location(0)]] position : vec3<f32>,
-        [[location(1)]] normal : vec3<f32>) -> VertexOutput {
+@vertex
+fn main(@location(0) position : vec3<f32>,
+        @location(1) normal : vec3<f32>) -> VertexOutput {
   var output : VertexOutput;
 
   // XY is in (-1, 1) space, Z is in (0, 1) space
@@ -649,27 +683,27 @@ fn main([[location(0)]] position : vec3<f32>,
 }
 `,
   fragment: `
-[[block]] struct Scene {
-  [[offset(0)]] lightViewProjMatrix : mat4x4<f32>;
-  [[offset(64)]] cameraViewProjMatrix : mat4x4<f32>;
-  [[offset(128)]] lightPos : vec3<f32>;
+struct Scene {
+  lightViewProjMatrix : mat4x4<f32>,
+  cameraViewProjMatrix : mat4x4<f32>,
+  lightPos : vec3<f32>,
 };
 
-[[group(0), binding(0)]] var<uniform> scene : Scene;
-[[group(0), binding(1)]] var shadowMap: texture_depth_2d;
-[[group(0), binding(2)]] var shadowSampler: sampler_comparison;
+@group(0) @binding(0) var<uniform> scene : Scene;
+@group(0) @binding(1) var shadowMap: texture_depth_2d;
+@group(0) @binding(2) var shadowSampler: sampler_comparison;
 
 struct FragmentInput {
-  [[location(0)]] shadowPos : vec3<f32>;
-  [[location(1)]] fragPos : vec3<f32>;
-  [[location(2)]] fragNorm : vec3<f32>;
+  @location(0) shadowPos : vec3<f32>,
+  @location(1) fragPos : vec3<f32>,
+  @location(2) fragNorm : vec3<f32>,
 };
 
-let albedo : vec3<f32> = vec3<f32>(0.9, 0.9, 0.9);
-let ambientFactor : f32 = 0.2;
+const albedo : vec3<f32> = vec3<f32>(0.9, 0.9, 0.9);
+const ambientFactor : f32 = 0.2;
 
-[[stage(fragment)]]
-fn main(input : FragmentInput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn main(input : FragmentInput) -> @location(0) vec4<f32> {
   // Percentage-closer filtering. Sample texels in the region
   // to smooth the result.
   var shadowFactor : f32 = 0.0;

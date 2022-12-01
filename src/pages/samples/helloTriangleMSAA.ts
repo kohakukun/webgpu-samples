@@ -6,11 +6,11 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const device = await adapter.requestDevice();
   const glslang = await glslangModule();
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
   const swapChainFormat = 'bgra8unorm';
 
-  const swapChain: GPUSwapChain = context.configureSwapChain({
+  const swapChain: GPUSwapChain = context.configure({
     device,
     format: swapChainFormat,
   });

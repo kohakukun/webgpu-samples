@@ -25,11 +25,11 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
   const device = await adapter.requestDevice();
   const glslang = await glslangModule();
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
   const swapChainFormat = 'bgra8unorm';
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
     format: swapChainFormat,
     usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -43,6 +43,20 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
         buffer: {
           type: 'uniform',
           minBindingSize: 4,
+        },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+        buffer: {
+          type: 'uniform',
+        },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.VERTEX,
+        buffer: {
+          type: 'read-only-storage',
         },
       },
     ],
@@ -217,6 +231,28 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
       ],
     });
 
+    const numParticles = 1;
+    const initialParticleData = new Float32Array(numParticles * 4);
+    for (let i = 0; i < numParticles; ++i) {
+      initialParticleData[4 * i + 0] = 0;
+      initialParticleData[4 * i + 1] = 1;
+      initialParticleData[4 * i + 2] = 0;
+      initialParticleData[4 * i + 3] = 1;
+    }
+
+    const particleBuffers: GPUBuffer[] = new Array(2);
+    for (let i = 0; i < 2; ++i) {
+      particleBuffers[i] = device.createBuffer({
+        size: initialParticleData.byteLength,
+        usage:  GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+        mappedAtCreation: true,
+      });
+      new Float32Array(particleBuffers[i].getMappedRange()).set(
+        initialParticleData
+      );
+      particleBuffers[i].unmap();
+    }
+
     const timeOffset = numTriangles * alignedUniformBytes;
     const timeBindGroup = device.createBindGroup({
       layout: timeBindGroupLayout,
@@ -229,6 +265,14 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
             size: Float32Array.BYTES_PER_ELEMENT,
           },
         },
+        {
+          binding: 1,
+          resource: {
+            buffer: particleBuffers[0],
+            offset: 0,
+            size: initialParticleData.byteLength,
+          },
+        }
       ],
     });
 
@@ -282,8 +326,9 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
     const renderPassDescriptor: GPURenderPassDescriptor = {
       colorAttachments: [
         {
-          attachment: undefined, // Assigned later
-          loadValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+          view: undefined, // Assigned later
+          loadOp: 'clear',
+          clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
         },
       ],
     };
@@ -301,7 +346,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
       uniformTime[0] = (timestamp - startTime) / 1000;
       device.queue.writeBuffer(uniformBuffer, timeOffset, uniformTime.buffer);
 
-      renderPassDescriptor.colorAttachments[0].attachment = swapChain
+      renderPassDescriptor.colorAttachments[0].view = context
         .getCurrentTexture()
         .createView();
 
@@ -314,7 +359,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean, gui: GUI) {
         recordRenderPass(passEncoder);
       }
 
-      passEncoder.endPass();
+      passEncoder.end();
       device.queue.submit([commandEncoder.finish()]);
     };
   }
@@ -382,6 +427,18 @@ const glslShaders = {
       float scalarOffset;
   };
 
+  struct Particle {
+    vec2 pos;
+    vec2 vel;
+  };
+
+  struct Particles {
+    Particle particles[1];
+  };
+
+  layout(std140, set = 0, binding = 1) uniform ParticlesSSO { Particles particlesB; };
+  
+
   layout(location = 0) in vec4 position;
   layout(location = 1) in vec4 color;
 
@@ -401,7 +458,8 @@ const glslShaders = {
       float yrot = xpos * sin(angle) + ypos * cos(angle);
       xpos = xrot + offsetX;
       ypos = yrot + offsetY;
-      v_color = vec4(fade, 1.0 - fade, 0.0, 1.0) + color;
+      //v_color = vec4(fade, 1.0 - fade, 0.0, 1.0) + color;
+      v_color = vec4(particlesB.particles[0].pos.x, particlesB.particles[0].pos.y, particlesB.particles[0].vel.x, particlesB.particles[0].vel.y);
       gl_Position = vec4(xpos, ypos, 0.0, 1.0);
   }
 `,
@@ -418,34 +476,47 @@ const glslShaders = {
 
 const wgslShaders = {
   vertex: `
-[[block]] struct Time {
-  [[offset(0)]] value : f32;
-};
+  struct Time {
+    value : f32,
+  }
+  
+  struct Uniforms {
+    scale : f32,
+    offsetX : f32,
+    offsetY : f32,
+    scalar : f32,
+    scalarOffset : f32,
+  }
 
-[[block]] struct Uniforms {
-  [[offset(0)]] scale : f32;
-  [[offset(4)]] offsetX : f32;
-  [[offset(8)]] offsetY : f32;
-  [[offset(12)]] scalar : f32;
-  [[offset(16)]] scalarOffset : f32;
-};
+  struct Particle {
+    pos : vec2<f32>,
+    vel : vec2<f32>,
+  }
 
-[[binding(0), group(0)]] var<uniform> time : Time;
-[[binding(0), group(1)]] var<uniform> uniforms : Uniforms;
-
-struct VertexOutput {
-  [[builtin(position)]] Position : vec4<f32>;
-  [[location(0)]] v_color : vec4<f32>;
-};
-
-[[stage(vertex)]]
-fn main([[location(0)]] position : vec4<f32>,
-        [[location(1)]] color : vec4<f32>) -> VertexOutput {
+  struct Particles {
+    particles : array<Particle, 1>,
+  }
+  
+  @binding(0) @group(0) var<uniform> time : Time;
+  @binding(1) @group(0) var<uniform> particlesB : Particles;
+  @binding(0) @group(1) var<uniform> uniforms : Uniforms;
+  @binding(2) @group(0) var<storage, read> particlesA : array<Particle>;
+  
+  struct VertexOutput {
+    @builtin(position) Position : vec4<f32>,
+    @location(0) v_color : vec4<f32>,
+  }
+  
+  @vertex
+  fn main(
+    @location(0) position : vec4<f32>,
+    @location(1) color : vec4<f32>
+  ) -> VertexOutput {
     var fade : f32 = (uniforms.scalarOffset + time.value * uniforms.scalar / 10.0) % 1.0;
     if (fade < 0.5) {
-        fade = fade * 2.0;
+      fade = fade * 2.0;
     } else {
-        fade = (1.0 - fade) * 2.0;
+      fade = (1.0 - fade) * 2.0;
     }
     var xpos : f32 = position.x * uniforms.scale;
     var ypos : f32 = position.y * uniforms.scale;
@@ -454,18 +525,29 @@ fn main([[location(0)]] position : vec4<f32>,
     var yrot : f32 = xpos * sin(angle) + ypos * cos(angle);
     xpos = xrot + uniforms.offsetX;
     ypos = yrot + uniforms.offsetY;
+    
     var output : VertexOutput;
-    output.v_color = vec4<f32>(fade, 1.0 - fade, 0.0, 1.0) + color;
+    //output.v_color = vec4<f32>(fade, 1.0 - fade, 0.0, 1.0) + color;
+    output.v_color = vec4<f32>(particlesB.particles[0].pos.x, particlesB.particles[0].pos.y, particlesB.particles[0].vel.x, particlesB.particles[0].vel.y);
     output.Position = vec4<f32>(xpos, ypos, 0.0, 1.0);
     return output;
-}
+  }
 `,
 
   fragment: `
-[[stage(fragment)]]
-fn main([[location(0)]] v_color : vec4<f32>) -> [[location(0)]] vec4<f32> {
-  return v_color;
-}
+  struct Particle {
+    pos : vec2<f32>,
+    vel : vec2<f32>,
+  }
+
+  struct Particles {
+    particles : array<Particle, 1>,
+  }
+  @binding(1) @group(0) var<uniform> particlesB : Particles;
+  @fragment
+  fn main(@location(0) v_color : vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(particlesB.particles[0].pos.y, v_color.y, v_color.z, v_color.a);
+  }
 `,
 };
 

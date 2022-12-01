@@ -6,16 +6,19 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const device = await adapter.requestDevice();
   const glslang = await glslangModule();
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
-  const swapChainFormat = 'bgra8unorm';
+  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
-    format: swapChainFormat,
+    format: presentationFormat,
+    alphaMode: "opaque",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
   });
 
   const pipeline = device.createRenderPipeline({
+    layout: 'auto',
     vertex: {
       module: useWGSL
         ? device.createShaderModule({
@@ -39,7 +42,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       entryPoint: 'main',
       targets: [
         {
-          format: swapChainFormat,
+          format: presentationFormat,
         },
       ],
     },
@@ -50,13 +53,15 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
 
   function frame() {
     const commandEncoder = device.createCommandEncoder();
-    const textureView = swapChain.getCurrentTexture().createView();
+    const textureView = context.getCurrentTexture().createView();
 
     const renderPassDescriptor: GPURenderPassDescriptor = {
       colorAttachments: [
         {
-          attachment: textureView,
-          loadValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+          view: textureView,
+          clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+          loadOp: 'clear',
+          storeOp: 'store',
         },
       ],
     };
@@ -64,7 +69,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(pipeline);
     passEncoder.draw(3, 1, 0, 0);
-    passEncoder.endPass();
+    passEncoder.end();
 
     device.queue.submit([commandEncoder.finish()]);
   }
@@ -92,21 +97,29 @@ void main() {
 
 const wgslShaders = {
   vertex: `
-let pos : array<vec2<f32>, 3> = array<vec2<f32>, 3>(
+const pos : array<vec2<f32>, 3> = array<vec2<f32>, 3>(
     vec2<f32>(0.0, 0.5),
     vec2<f32>(-0.5, -0.5),
     vec2<f32>(0.5, -0.5));
 
-[[stage(vertex)]]
-fn main([[builtin(vertex_index)]] VertexIndex : u32)
-     -> [[builtin(position)]] vec4<f32> {
+@vertex
+fn main(@builtin(vertex_index) VertexIndex : u32)
+     -> @builtin(position) vec4<f32> {
   return vec4<f32>(pos[VertexIndex], 0.0, 1.0);
 }
 `,
   fragment: `
-[[stage(fragment)]]
-fn main() -> [[location(0)]] vec4<f32> {
-  return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+  struct MyOutputs {
+    @location(0) color: vec4<f32>,
+    @location(1) colorCopy: vec4<f32>
+  }
+
+@fragment
+fn main() -> MyOutputs {
+  var out: MyOutputs;
+  out.color = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+  out.colorCopy = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+  return out;
 }
 `,
 };

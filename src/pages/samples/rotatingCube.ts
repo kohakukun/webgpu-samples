@@ -18,9 +18,9 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
   const projectionMatrix = mat4.create();
   mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 1, 100.0);
 
-  const context = canvas.getContext('gpupresent');
+  const context = canvas.getContext('webgpu');
 
-  const swapChain = context.configureSwapChain({
+  const swapChain = context.configure({
     device,
     format: 'bgra8unorm',
   });
@@ -164,7 +164,7 @@ async function init(canvas: HTMLCanvasElement, useWGSL: boolean) {
       transformationMatrix.byteOffset,
       transformationMatrix.byteLength
     );
-    renderPassDescriptor.colorAttachments[0].attachment = swapChain
+    renderPassDescriptor.colorAttachments[0].attachment = context
       .getCurrentTexture()
       .createView();
 
@@ -208,25 +208,25 @@ void main() {
 
 const wgslShaders = {
   vertex: `
-[[block]] struct Uniforms {
-  modelViewProjectionMatrix : mat4x4<f32>;
+struct Uniforms {
+  modelViewProjectionMatrix : mat4x4<f32>,
 };
 
-[[binding(0), group(0)]] var<uniform> uniforms : Uniforms;
+@group(0) @binding(0) var<uniform> uniforms : Uniforms;
 
 struct VertexOutput {
-  [[builtin(position)]] Position : vec4<f32>;
-  [[location(0)]] fragColor : vec4<f32>;
+  @builtin(position) Position : vec4<f32>,
+  @location(0) fragColor : vec4<f32>,
 };
 
-[[stage(vertex)]]
+@vertex
 fn main([[location(0)]] position : vec4<f32>,
-        [[location(1)]] color : vec4<f32>) -> VertexOutput {
+        [[location(1)]] color : array<vec4<f32>>) -> VertexOutput {
   return VertexOutput(uniforms.modelViewProjectionMatrix * position, color);
 }
 `,
   fragment: `
-[[stage(fragment)]]
+@fragment
 fn main([[location(0)]] fragColor : vec4<f32>) -> [[location(0)]] vec4<f32> {
   return fragColor;
 }
