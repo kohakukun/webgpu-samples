@@ -4,6 +4,7 @@ const fs = require('fs');
 const BASE_PATH = process.env.BASE_PATH || '';
 
 module.exports = {
+  productionBrowserSourceMaps: true,
   target: 'serverless',
   basePath: BASE_PATH,
   compress: true,
