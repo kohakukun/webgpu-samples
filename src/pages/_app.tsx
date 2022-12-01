@@ -14,23 +14,7 @@ const MainLayout: React.FunctionComponent<AppProps> = ({
 }) => {
   const router = useRouter();
   const samplesNames = [
-    'helloTriangle',
-    'helloTriangleMSAA',
-    'rotatingCube',
-    'twoCubes',
-    'texturedCube',
-    'instancedCube',
-    'fractalCube',
-    'computeBoids',
-    'animometer',
-    'videoUploading',
-    'imageBlur',
-    'shadowMapping',
-    'reversedZ',
-    'testIndexed',
     'storage',
-    'testBindGroups',
-    'colorCorrection',
   ];
 
   const oldPathSyntaxMatch = router.asPath.match(/(\?wgsl=[01])#(\S+)/);
